@@ -26,6 +26,7 @@ fn encode_image_to_base64(path: &Path) -> Result<(String, String), String> {
         "png" => "image/png",
         "bmp" => "image/bmp",
         "gif" => "image/gif",
+        "webp" => "image/webp",
         _ => return Err(format!("Unsupported image extension: .{}", ext)),
     };
 
@@ -201,7 +202,7 @@ async fn main() {
                 if skip_existing {
                     let json_path = Path::new(output_dir).join(format!(
                         "{}{}.json",
-                        path.file_stem().unwrap().to_string_lossy().to_string(),
+                        path.file_name().unwrap().to_string_lossy().to_string(),
                         file_suffix
                     ));
                     if json_path.exists() {
@@ -240,7 +241,7 @@ async fn main() {
                 }
             };
 
-            let file_stem = path.file_stem().unwrap().to_string_lossy().to_string();
+            let file_stem = path.file_name().unwrap().to_string_lossy().to_string();
             let client_clone = client.clone();
             let api_url_clone = api_url.clone();
             let model_clone = model.clone();
