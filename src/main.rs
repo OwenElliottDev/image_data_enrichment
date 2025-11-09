@@ -201,8 +201,11 @@ fn main() {
 
             if supported_ext.contains(ext.as_str()) {
                 if skip_existing {
-                    let json_path = Path::new(output_dir)
-                        .join(format!("{}{}.json", path.file_stem().unwrap().to_string_lossy().to_string(), file_suffix));
+                    let json_path = Path::new(output_dir).join(format!(
+                        "{}{}.json",
+                        path.file_stem().unwrap().to_string_lossy().to_string(),
+                        file_suffix
+                    ));
                     if json_path.exists() {
                         return None;
                     } else {
