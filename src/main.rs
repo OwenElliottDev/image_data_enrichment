@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 fn encode_image_to_base64(path: &Path) -> Result<(String, String), String> {
     let mut file = File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
@@ -81,13 +81,6 @@ fn call_ollama_structured(
     }
 
     serde_json::from_str(&text).map_err(|e| format!("Failed to parse JSON: {}", e))
-}
-
-fn image_name_to_suffixed_json(image_path: &Path, suffix: &str) -> PathBuf {
-    let file_stem = image_path.file_stem().unwrap().to_string_lossy();
-    let new_file_name = format!("{}{}{}", file_stem, suffix, ".json");
-    let new_path = image_path.with_file_name(new_file_name);
-    new_path
 }
 
 fn main() {
@@ -208,7 +201,8 @@ fn main() {
 
             if supported_ext.contains(ext.as_str()) {
                 if skip_existing {
-                    let json_path = image_name_to_suffixed_json(&path, file_suffix);
+                    let json_path = Path::new(output_dir)
+                        .join(format!("{}{}.json", path.file_stem().unwrap().to_string_lossy().to_string(), file_suffix));
                     if json_path.exists() {
                         return None;
                     } else {

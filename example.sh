@@ -5,4 +5,5 @@
   --batch-size 2 \
   --schema example_schema.json \
   --pretty-json \
-  --suffix "_processed"
+  --suffix "_processed" \
+  --skip-existing
