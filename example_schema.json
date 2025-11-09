@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ImageDescription",
+  "type": "object",
+  "properties": {
+    "caption": {
+      "type": "string",
+      "description": "A single sentence summarizing the entire image content."
+    },
+    "main_subjects": {
+      "type": "array",
+      "description": "A list of the most important people, vehicles, or objects visible.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "item": { "type": "string", "description": "The name of the subject (e.g., 'Man', 'White Classic Car')." },
+          "description": { "type": "string", "description": "Key details about the subject (e.g., clothing, color, condition)." },
+          "position": { "type": "string", "description": "Where it is located in the frame (e.g., foreground, background left)." }
+        },
+        "required": ["item"]
+      }
+    },
+    "aesthetic_score": {
+        "type":"integer",
+        "description": "A score ranging from 1-10 which describes how aesthetically pleasing the image is."
+    },
+    "setting": {
+      "type": "object",
+      "properties": {
+        "location_type": { "type": "string", "enum": ["Residential", "Urban", "Outdoor", "Indoor", "Abstract"] },
+        "decade_guess": { "type": "string", "description": "The estimated decade or era based on visual cues (e.g., '1970s' or '2010s')." },
+        "environment": { "type": "string", "description": "Description of the background environment (e.g., 'Quiet suburban street with houses and utility poles')." }
+      },
+      "required": ["location_type", "decade_guess", "environment"]
+    },
+    "details": {
+      "type": "array",
+      "description": "A list of secondary observations, such as colors, textures, or specific artifacts (like street signs or fence types).",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": ["caption", "main_subjects", "setting", "aesthetic_score"]
+}
