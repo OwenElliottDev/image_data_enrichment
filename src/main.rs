@@ -1,8 +1,8 @@
 use base64::{Engine as _, engine::general_purpose};
 use clap::{Arg, Command};
 use indicatif::{ProgressBar, ProgressStyle};
-use log::{debug, error, warn};
-use reqwest::blocking::Client;
+use log::{error, warn};
+use reqwest::Client;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::fs::{self, File};
@@ -33,18 +33,19 @@ fn encode_image_to_base64(path: &Path) -> Result<(String, String), String> {
     Ok((b64_data, mime_type.to_string()))
 }
 
-fn call_ollama_structured(
+async fn call_ollama_structured(
     client: &Client,
     api_url: &str,
     model: &str,
-    images_b64: &[String],
+    image_b64: &str,
     prompt: &str,
     schema_obj: Option<&Value>,
     options: Option<&Value>,
 ) -> Result<Value, String> {
-    let messages = vec![json!({        "role": "user",
+    let messages = vec![json!({
+        "role": "user",
         "content": prompt,
-        "images": images_b64,
+        "images": [image_b64],
     })];
 
     let mut payload = json!({
@@ -60,20 +61,16 @@ fn call_ollama_structured(
         payload["options"] = opts.clone();
     }
 
-    debug!(
-        "Request payload: {}",
-        serde_json::to_string_pretty(&payload).unwrap_or_default()
-    );
-
     let resp = client
         .post(api_url)
         .header("Content-Type", "application/json")
         .json(&payload)
         .send()
+        .await
         .map_err(|e| format!("HTTP request failed: {}", e))?;
 
     let status = resp.status();
-    let text = resp.text().unwrap_or_default();
+    let text = resp.text().await.unwrap_or_default();
 
     if !status.is_success() {
         error!("Server said: {}", text);
@@ -83,7 +80,8 @@ fn call_ollama_structured(
     serde_json::from_str(&text).map_err(|e| format!("Failed to parse JSON: {}", e))
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let matches = Command::new("Ollama Batch Image Captioning")
         .arg(
             Arg::new("dir")
@@ -93,7 +91,7 @@ fn main() {
         )
         .arg(
             Arg::new("api_url")
-                .long("api_url")
+                .long("api-url")
                 .required(true)
                 .help("Ollama API URL"),
         )
@@ -116,7 +114,7 @@ fn main() {
         )
         .arg(
             Arg::new("output_dir")
-                .long("output_dir")
+                .long("output-dir")
                 .help("Directory to save output JSON files"),
         )
         .arg(
@@ -230,88 +228,87 @@ fn main() {
     let client = Client::new();
 
     for batch in files.chunks(batch_size) {
-        let mut images_b64 = Vec::new();
-        let mut batch_names = Vec::new();
+        let mut tasks = Vec::new();
 
         for path in batch {
-            match encode_image_to_base64(path) {
-                Ok((b64, _mime)) => {
-                    images_b64.push(b64);
-                    batch_names.push(path.file_stem().unwrap().to_string_lossy().to_string());
-                }
+            let image_b64 = match encode_image_to_base64(path) {
+                Ok((b64, _mime)) => b64,
                 Err(e) => {
                     error!("Error encoding {}: {}", path.display(), e);
                     pb.inc(1);
+                    continue;
                 }
-            }
-        }
+            };
 
-        if images_b64.is_empty() {
-            continue;
-        }
+            let file_stem = path.file_stem().unwrap().to_string_lossy().to_string();
+            let client_clone = client.clone();
+            let api_url_clone = api_url.clone();
+            let model_clone = model.clone();
+            let prompt_clone = prompt.clone();
+            let schema_clone = schema_obj.clone();
+            let options_clone = options.clone();
+            let output_dir_clone = output_dir.to_string();
+            let file_suffix_clone = file_suffix.clone();
+            let pretty_json_clone = pretty_json;
 
-        match call_ollama_structured(
-            &client,
-            api_url,
-            model,
-            &images_b64,
-            prompt,
-            schema_obj.as_ref(),
-            options.as_ref(),
-        ) {
-            Ok(resp) => {
-                let contents = if let Some(messages) = resp.get("messages") {
-                    messages
-                        .as_array()
-                        .map(|arr| {
-                            arr.iter()
-                                .map(|msg| msg.get("content").cloned().unwrap_or(json!("")))
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default()
-                } else if let Some(message) = resp.get("message") {
-                    vec![message.get("content").cloned().unwrap_or(json!(""))]
-                } else {
-                    vec![resp.clone()]
-                };
+            let task = tokio::spawn(async move {
+                match call_ollama_structured(
+                    &client_clone,
+                    &api_url_clone,
+                    &model_clone,
+                    &image_b64,
+                    &prompt_clone,
+                    schema_clone.as_ref(),
+                    options_clone.as_ref(),
+                )
+                .await
+                {
+                    Ok(resp) => {
+                        let content = resp
+                            .get("message")
+                            .and_then(|m| m.get("content"))
+                            .cloned()
+                            .unwrap_or(resp.clone());
 
-                for (i, content) in contents.iter().enumerate() {
-                    let output_data = if schema_obj.is_some() {
-                        match serde_json::from_value::<Value>(content.clone()) {
-                            Ok(val) => val,
-                            Err(_) => {
-                                warn!(
-                                    "Response for {} is not valid JSON. Storing raw text.",
-                                    batch_names[i]
-                                );
-                                json!(content)
-                            }
-                        }
-                    } else {
-                        content.clone()
-                    };
+                        let output_data = if schema_clone.is_some() {
+                            serde_json::from_value::<Value>(content.clone()).unwrap_or(content)
+                        } else {
+                            content
+                        };
 
-                    let out_fname = Path::new(output_dir)
-                        .join(format!("{}{}.json", batch_names[i], file_suffix));
-                    let mut fo = File::create(&out_fname).expect("Failed to create output file");
+                        let out_path = Path::new(&output_dir_clone)
+                            .join(format!("{}{}.json", file_stem, file_suffix_clone));
+                        let mut fo = File::create(&out_path).expect("Failed to create output");
 
-                    let json_val = serde_json::from_str(output_data.as_str().unwrap())
-                        .unwrap_or(output_data.clone());
+                        let json_val = serde_json::from_str(output_data.as_str().unwrap())
+                            .unwrap_or(output_data.clone());
 
-                    let json_str = if pretty_json {
-                        serde_json::to_string_pretty(&json_val).unwrap()
-                    } else {
-                        serde_json::to_string(&json_val).unwrap()
-                    };
-                    fo.write_all(json_str.as_bytes())
-                        .expect("Failed to write output file");
+                        let json_str = if pretty_json_clone {
+                            serde_json::to_string_pretty(&json_val).unwrap()
+                        } else {
+                            serde_json::to_string(&json_val).unwrap()
+                        };
+
+                        fo.write_all(json_str.as_bytes())
+                            .expect("Failed to write output");
+
+                        Ok(())
+                    }
+                    Err(e) => {
+                        error!("Error processing {}: {}", file_stem, e);
+                        Err(e)
+                    }
                 }
-            }
-            Err(e) => {
-                error!("Error processing batch: {}", e);
-            }
+            });
+
+            tasks.push(task);
         }
-        pb.inc(batch.len() as u64);
+
+        for task in tasks {
+            let _ = task.await;
+            pb.inc(1);
+        }
     }
+
     pb.finish_with_message("Done");
 }
